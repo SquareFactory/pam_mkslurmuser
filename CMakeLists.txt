@@ -17,7 +17,6 @@ find_package(PAM REQUIRED)
 add_compile_options(
   -O3
   -m64
-  -std=c99
   -Wall
   -Wextra
   -Werror
