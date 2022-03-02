@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "*.twig": "twig",
+    "*.eb": "python",
+    "*.h": "c",
+    "sstream": "c",
+    "typeinfo": "c"
+  },
+  "C_Cpp.errorSquiggles": "Disabled"
+}

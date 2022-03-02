@@ -1,0 +1,113 @@
+name: Build the library
+on: [push, pull_request]
+jobs:
+  build-deb:
+    name: Build the plugin with docker
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        tag: ['18.04', '20.04', '22.04']
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Build
+        uses: docker/build-push-action@v2
+        id: docker_build
+        with:
+          context: .
+          file: ./Dockerfile.deb
+          platforms: linux/amd64
+          tags: builder
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            ubuntu_version=${{ matrix.tag }}
+
+      - name: Fetch artifacts
+        run: |
+          sudo mkdir -p /artifacts
+          sudo docker run -v /artifacts:/out --rm builder sh -c "cp /artifacts/* /out/"
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: deb-${{ matrix.tag }}
+          path: /artifacts/*.deb
+
+  build-rpm:
+    name: Build the plugin on Rocky
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        tag: ['8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Build
+        uses: docker/build-push-action@v2
+        id: docker_build
+        with:
+          context: .
+          file: ./Dockerfile.rpm
+          platforms: linux/amd64
+          tags: builder
+          load: true
+          target: builder
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            rocky_version=${{ matrix.tag }}
+
+      - name: Test
+        uses: docker/build-push-action@v2
+        id: docker_test
+        with:
+          context: .
+          file: ./Dockerfile.rpm
+          platforms: linux/amd64
+          tags: tester
+          target: tester
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            rocky_version=${{ matrix.tag }}
+
+      - name: Fetch artifacts
+        run: |
+          sudo mkdir -p /artifacts
+          sudo docker run -v /artifacts:/out --rm builder sh -c "cp /artifacts/* /out/"
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: rpm-${{ matrix.tag }}
+          path: /artifacts/*.rpm
+
+      - name: Fetch secrets
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_CONFIG: ${{ secrets.SSH_CONFIG }}
+        run: |
+          sudo mkdir -p /secrets/
+          echo "$SSH_PRIVATE_KEY" | sudo tee /secrets/id_rsa > /dev/null
+          echo "$SSH_KNOWN_HOSTS" | sudo tee /secrets/known_hosts > /dev/null
+          echo "$SSH_CONFIG" | sudo tee /secrets/config > /dev/null
+          sudo chown -R root:root /secrets/
+          sudo chmod 600 /secrets/*
+
+      - name: Run Docker image
+        run: sudo docker run --rm --pull never -v "/secrets:/root/.ssh" builder
