@@ -6,7 +6,10 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        tag: ['18.04', '20.04', '22.04']
+        tag:
+          - image: '18.04'
+          - image: '20.04'
+          - image: '22.04'
     steps:
       - uses: actions/checkout@v2
         with:
@@ -29,7 +32,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            ubuntu_version=${{ matrix.tag }}
+            ubuntu_version=${{ matrix.tag.image }}
 
       - name: Fetch artifacts
         run: |
@@ -38,7 +41,7 @@ jobs:
 
       - uses: actions/upload-artifact@v2
         with:
-          name: deb-${{ matrix.tag }}
+          name: deb-${{ matrix.tag.image }}
           path: /artifacts/*.deb
 
   build-rpm:
@@ -46,7 +49,11 @@ jobs:
     runs-on: ubuntu-20.04
     strategy:
       matrix:
-        tag: ['8.4', '8.5']
+        tag:
+          - image: '8.5'
+            export_url: S3_URL_ROCKY8
+          - image: '9.0'
+            export_url: S3_URL_ROCKY9
     steps:
       - uses: actions/checkout@v2
         with:
@@ -70,7 +77,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            rocky_version=${{ matrix.tag }}
+            rocky_version=${{ matrix.tag.image }}
 
       - name: Test
         uses: docker/build-push-action@v2
@@ -84,30 +91,28 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            rocky_version=${{ matrix.tag }}
+            rocky_version=${{ matrix.tag.image }}
 
       - name: Fetch artifacts
         run: |
           sudo mkdir -p /artifacts
           sudo docker run -v /artifacts:/out --rm builder sh -c "cp /artifacts/* /out/"
 
-      - uses: actions/upload-artifact@v2
+      - uses: actions/setup-python@v4
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          name: rpm-${{ matrix.tag }}
-          path: /artifacts/*.rpm
+          python-version: '3.x'
 
-      - name: Fetch secrets
+      - name: Install s3cmd
+        if: startsWith(github.ref, 'refs/tags/')
+        run: pip install s3cmd
+
+      - name: Upload to s3
+        # Do not use an preconfigured github actions to avoid pipeline attacks
+        if: startsWith(github.ref, 'refs/tags/')
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
-          SSH_CONFIG: ${{ secrets.SSH_CONFIG }}
+          S3_CFG: '${{ secrets.S3_CFG }}'
+          S3_URL: '${{ secrets[matrix.tag.export_url] }}'
         run: |
-          sudo mkdir -p /secrets/
-          echo "$SSH_PRIVATE_KEY" | sudo tee /secrets/id_rsa > /dev/null
-          echo "$SSH_KNOWN_HOSTS" | sudo tee /secrets/known_hosts > /dev/null
-          echo "$SSH_CONFIG" | sudo tee /secrets/config > /dev/null
-          sudo chown -R root:root /secrets/
-          sudo chmod 600 /secrets/*
-
-      - name: Run Docker image
-        run: sudo docker run --rm --pull never -v "/secrets:/root/.ssh" builder
+          echo "${S3_CFG}" | sudo tee /.s3cfg
+          s3cmd sync -v --acl-public --config="/.s3cfg" /artifacts/ "${S3_URL}x86_64/"
